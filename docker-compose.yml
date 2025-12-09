@@ -11,6 +11,7 @@ services:
     volumes:
       - ./datas:/data
       - ./event_counter.py:/app/event_counter.py
+      - ./timer.py:/app/timer.py
       - ./output:/output
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     networks:

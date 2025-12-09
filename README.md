@@ -47,9 +47,11 @@ Mise en place d'un cluster Apache Spark local avec Docker pour analyser les év�
 Atelier 1/
 ├── docker-compose.yml      # Configuration du cluster Spark (1 master + 2 workers)
 ├── event_counter.py        # Programme PySpark orienté objet avec CLI
+├── timer.py                # Module de mesure du temps d'exécution
 ├── README.md               # Documentation (ce fichier)
 ├── datas/
-│   └── 20251208.export.CSV # Données GDELT (111,373 événements)
+│   ├── 20251208.export.CSV       # Données GDELT (111,373 événements)
+│   └── GDELT.MASTERREDUCEDV2.TXT # Données GDELT 1979-2013
 └── output/
     └── event_counts_by_country/  # Résultats CSV générés
         └── part-00000-*.csv
@@ -133,6 +135,9 @@ GDELT Event Counter - Comptage des événements par pays
 
 Lecture des données depuis: datas/20251208.export.CSV
 Nombre total d'événements chargés: 111373
+[TIMER] load_data: 2.35 secondes
+
+[TIMER] count_by_country: 0.12 secondes
 
 ============================================================
 TOP 30 des pays par nombre d'événements:
@@ -143,17 +148,12 @@ TOP 30 des pays par nombre d'événements:
 |US         |30787     |
 |UK         |6115      |
 |IN         |6025      |
-|IS         |4008      |
-|NI         |3682      |
-|AS         |3292      |
-|CH         |3006      |
-|UP         |2932      |
-|RS         |2884      |
-|CA         |2545      |
 ...
 
 Sauvegarde des résultats vers: output/event_counts_by_country
 Sauvegarde terminée avec succès!
+[TIMER] save_results: 1.45 secondes
+[TIMER] run: 5.92 secondes
 ```
 
 ## Résultats
@@ -277,6 +277,40 @@ Pour que Spark puisse écrire des fichiers CSV sur Windows, il faut configurer H
    ```
 
 > **Note** : L'exécution via Docker est recommandée car elle ne nécessite aucune configuration Hadoop supplémentaire.
+
+## Mesure des performances
+
+Le module `timer.py` permet de mesurer et comparer les temps d'exécution entre l'exécution locale et le cluster Docker.
+
+### Comparer Local vs Cluster
+
+**Exécution locale (Windows) :**
+```bash
+spark-submit event_counter.py --input datas/GDELT.MASTERREDUCEDV2.TXT
+```
+
+**Exécution sur le cluster Docker (2 workers) :**
+```bash
+docker exec spark-master //opt/spark/bin/spark-submit \
+  --master spark://spark-master:7077 \
+  //app/event_counter.py \
+  --input /data/GDELT.MASTERREDUCEDV2.TXT
+```
+
+### Module timer.py
+
+Le décorateur `@timed` mesure automatiquement le temps de chaque méthode :
+
+```python
+from timer import timed
+
+@timed
+def ma_fonction():
+    # Le temps d'exécution sera affiché automatiquement
+    pass
+```
+
+Sortie : `[TIMER] ma_fonction: X.XX secondes`
 
 ## Données GDELT
 

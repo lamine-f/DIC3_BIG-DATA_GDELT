@@ -1,6 +1,7 @@
 import argparse
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import col, count
+from timer import timed
 
 
 class GDELTEventCounter:
@@ -23,6 +24,7 @@ class GDELTEventCounter:
         self.df = None
         self.results = None
 
+    @timed
     def load_data(self, input_path: str) -> DataFrame:
         """
         Charge les données GDELT depuis un fichier CSV.
@@ -44,6 +46,7 @@ class GDELTEventCounter:
         print(f"Nombre total d'événements chargés: {total_events}")
         return self.df
 
+    @timed
     def count_by_country(self) -> DataFrame:
         """
         Compte les événements par pays.
@@ -86,6 +89,7 @@ class GDELTEventCounter:
         print("=" * 60)
         self.results.show(n, truncate=False)
 
+    @timed
     def save_results(self, output_path: str) -> None:
         """
         Sauvegarde les résultats en CSV.
@@ -103,6 +107,7 @@ class GDELTEventCounter:
             .csv(output_path)
         print("Sauvegarde terminée avec succès!")
 
+    @timed
     def run(self, input_path: str, output_path: str) -> None:
         """
         Exécute le pipeline complet.
