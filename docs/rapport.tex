@@ -1,0 +1,510 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{tabularx}
+
+\geometry{margin=2.5cm}
+
+% Configuration des listings pour Python
+\lstdefinestyle{python}{
+    language=Python,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue}\bfseries,
+    stringstyle=\color{red},
+    commentstyle=\color{green!60!black},
+    morecomment=[l][\color{magenta}]{\#},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    numbersep=5pt,
+    backgroundcolor=\color{gray!10},
+    frame=single,
+    rulecolor=\color{gray!30},
+    breaklines=true,
+    breakatwhitespace=true,
+    tabsize=4,
+    showstringspaces=false
+}
+
+% Configuration des listings pour YAML
+\lstdefinestyle{yaml}{
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    stringstyle=\color{red},
+    commentstyle=\color{green!60!black},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    numbersep=5pt,
+    backgroundcolor=\color{gray!10},
+    frame=single,
+    rulecolor=\color{gray!30},
+    breaklines=true,
+    tabsize=2
+}
+
+% Configuration des listings pour Bash
+\lstdefinestyle{bash}{
+    language=bash,
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    stringstyle=\color{red},
+    commentstyle=\color{green!60!black},
+    backgroundcolor=\color{gray!10},
+    frame=single,
+    rulecolor=\color{gray!30},
+    breaklines=true,
+    showstringspaces=false
+}
+
+\title{
+    \textbf{Atelier 1 : Cluster Spark avec Docker}\\
+    \large Analyse des événements GDELT
+}
+\author{
+    Big Data - DIC3 Informatique \\
+    Groupe 2: \textbf{Awa Diop, Mouhamed Lamine Faye} \\
+    \textbf{Dialika Thiaw et Moussa Ndoye}
+    }
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+%==============================================================================
+\section{Introduction - Projet GDELT}
+%==============================================================================
+
+\subsection{Présentation de GDELT}
+
+Le projet \textbf{GDELT} (Global Database of Events, Language, and Tone) est une initiative qui surveille les médias du monde entier en temps réel. Il analyse les actualités diffusées dans plus de 100 langues et identifie les personnes, lieux, organisations, thèmes et événements qui façonnent notre monde.
+
+GDELT est la plus grande base de données ouverte sur le comportement humain à travers le monde, couvrant des événements depuis 1979 jusqu'à aujourd'hui.
+
+\subsection{Objectif de l'atelier}
+
+L'objectif de cet atelier est de \textbf{compter le nombre d'événements par pays} à partir des données GDELT, en utilisant Apache Spark pour le traitement distribué.
+
+\subsection{Source des données}
+
+En exploitant le projet GDELT, nous nous sommes rendus sur le site officiel pour récupérer les fichiers de données :
+
+\begin{center}
+\url{http://data.gdeltproject.org/events/index.html}
+\end{center}
+
+Nous utilisons le format \textbf{GDELT 2.0 Events} qui contient 58 colonnes par événement.
+
+\subsection{Fichier utilisé}
+
+Pour l'étude et les tests en local, nous avons téléchargé le fichier :
+
+\begin{itemize}
+    \item \textbf{Nom} : \texttt{20251208.export.CSV.zip}
+    \item \textbf{Taille} : 41.4 Mo (compressé)
+    \item \textbf{Événements} : 111,373 événements
+\end{itemize}
+
+\subsection{Identification de la colonne pays}
+
+Après analyse du schéma GDELT 2.0, nous avons identifié la \textbf{colonne 51} (index à partir de 0) comme étant la colonne \texttt{ActionGeo\_CountryCode}. Cette colonne contient les codes pays FIPS à 2 lettres (ex: US, UK, FR, IN).
+
+Ces codes étant uniques par pays, ils sont idéaux pour effectuer le comptage des événements.
+
+%==============================================================================
+\section{Code Source}
+%==============================================================================
+
+\subsection{Architecture du code}
+
+Le code est organisé de manière orientée objet avec une classe principale \texttt{GDELTEventCounter} qui encapsule toute la logique de traitement Spark.
+
+\subsubsection{Structure des fichiers}
+
+\begin{lstlisting}[style=bash]
+app/
+├── __init__.py         # Initialisation du package
+├── event_counter.py    # Classe principale
+└── timer.py            # Module de mesure du temps
+\end{lstlisting}
+
+\subsection{Classe GDELTEventCounter}
+
+\begin{lstlisting}[style=python]
+class GDELTEventCounter:
+    """Classe pour compter les evenements GDELT par pays."""
+
+    def __init__(self, master: str = "local[*]",
+                 app_name: str = "GDELTEventCounter",
+                 country_col: int = 51,
+                 has_header: bool = False):
+        self.spark = SparkSession.builder \
+            .appName(app_name) \
+            .master(master) \
+            .getOrCreate()
+        self.country_col = country_col
+        self.has_header = has_header
+        self.df = None
+        self.results = None
+
+    @timed
+    def load_data(self, input_path: str) -> DataFrame:
+        """Charge les donnees GDELT depuis un fichier CSV."""
+        self.df = self.spark.read.csv(
+            input_path, sep='\t',
+            header=self.has_header, inferSchema=True
+        )
+        return self.df
+
+    @timed
+    def count_by_country(self) -> DataFrame:
+        """Compte les evenements par pays."""
+        col_name = self.df.columns[self.country_col] \
+            if self.has_header else f"_c{self.country_col}"
+        country_df = self.df.withColumnRenamed(col_name, "CountryCode")
+        self.results = country_df.filter(
+            col("CountryCode").isNotNull()
+        ).groupBy("CountryCode") \
+         .agg(count("*").alias("EventCount")) \
+         .orderBy(col("EventCount").desc())
+        return self.results
+
+    @timed
+    def save_results(self, output_path: str) -> None:
+        """Sauvegarde les resultats en CSV."""
+        self.results.coalesce(1).write \
+            .mode("overwrite").option("header", "true") \
+            .csv(output_path)
+\end{lstlisting}
+
+\subsection{Réutilisabilité et flexibilité}
+
+Le code est conçu pour être \textbf{réutilisable} et \textbf{flexible} grâce aux paramètres de ligne de commande :
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{|l|X|l|}
+\hline
+\textbf{Argument} & \textbf{Description} & \textbf{Défaut} \\
+\hline
+\texttt{--input} & Chemin du fichier GDELT & \texttt{datas/20251208.export.CSV} \\
+\hline
+\texttt{--output} & Chemin de sortie CSV & \texttt{output/event\_counts} \\
+\hline
+\texttt{--master} & URL du Spark Master & \texttt{local[*]} \\
+\hline
+\texttt{--country-col} & Index de la colonne pays & \texttt{51} \\
+\hline
+\texttt{--header} & Fichier avec en-tête & \texttt{False} \\
+\hline
+\end{tabularx}
+\caption{Arguments de ligne de commande}
+\end{table}
+
+\subsection{Module timer.py}
+
+Le décorateur \texttt{@timed} permet de mesurer automatiquement le temps d'exécution de chaque méthode :
+
+\begin{lstlisting}[style=python]
+def timed(func):
+    """Decorateur pour mesurer le temps d'execution."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.time()
+        result = func(*args, **kwargs)
+        end = time.time()
+        print(f"[TIMER] {func.__name__}: {end - start:.2f} secondes")
+        return result
+    return wrapper
+\end{lstlisting}
+
+%==============================================================================
+\section{Environnement d'exécution local}
+%==============================================================================
+
+\subsection{Configuration Windows}
+
+L'environnement local est configuré sur Windows avec les composants suivants :
+
+\subsubsection{Prérequis}
+
+\begin{itemize}
+    \item \textbf{Java} : JDK 11 ou 17
+    \item \textbf{Apache Spark} : Version 3.5.7
+    \item \textbf{Hadoop} : Binaires Windows (winutils)
+\end{itemize}
+
+\subsubsection{Téléchargement de winutils}
+
+Pour que Spark puisse écrire des fichiers sur Windows, nous avons téléchargé les binaires Hadoop depuis :
+
+\begin{center}
+\url{https://github.com/cdarlint/winutils/tree/master/hadoop-3.3.6/bin}
+\end{center}
+
+Les fichiers ont été placés dans \texttt{C:\textbackslash hadoop\textbackslash bin\textbackslash}.
+
+\subsubsection{Téléchargement de Spark 3.5.7}
+
+Apache Spark a été téléchargé depuis :
+
+\begin{center}
+\url{https://www.apache.org/dyn/closer.lua/spark/spark-3.5.7/spark-3.5.7-bin-hadoop3.tgz}
+\end{center}
+
+\subsection{Vérification de l'installation}
+
+\begin{lstlisting}[style=bash]
+spark-submit --version
+\end{lstlisting}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{images/spark-submit-version.png}
+\caption{Vérification de la version de Spark}
+\end{figure}
+
+\subsection{Exécution locale}
+
+Pour lancer le programme en local :
+
+\begin{lstlisting}[style=bash]
+spark-submit app/event_counter.py --input datas/20251208.export.CSV
+\end{lstlisting}
+
+%==============================================================================
+\section{Déploiement Docker}
+%==============================================================================
+
+\subsection{Architecture du cluster}
+
+Le cluster Spark est déployé avec Docker Compose et comprend :
+
+\begin{itemize}
+    \item \textbf{1 Spark Master} : Coordonne les tâches
+    \item \textbf{2 Spark Workers} : Exécutent les tâches
+\end{itemize}
+
+Chaque worker est configuré avec :
+\begin{itemize}
+    \item 2 Go de mémoire
+    \item 2 cœurs CPU
+\end{itemize}
+
+\subsection{Fichier docker-compose.yml}
+
+\begin{lstlisting}[style=yaml]
+services:
+  spark-master:
+    image: apache/spark:3.5.0
+    container_name: spark-master
+    ports:
+      - "8080:8080"  # Web UI Master
+      - "7077:7077"  # Port Spark Master
+      - "4040:4040"  # Application UI
+    volumes:
+      - ./datas:/data
+      - ./app:/app
+      - ./output:/output
+
+  spark-worker-1:
+    image: apache/spark:3.5.0
+    container_name: spark-worker-1
+    environment:
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+    ports:
+      - "8081:8081"
+
+  spark-worker-2:
+    image: apache/spark:3.5.0
+    container_name: spark-worker-2
+    environment:
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+    ports:
+      - "8082:8081"
+
+networks:
+  spark-net:
+    driver: bridge
+\end{lstlisting}
+
+\subsection{Démarrage du cluster}
+
+\begin{lstlisting}[style=bash]
+# Demarrer le cluster
+docker-compose up -d
+
+# Verifier les conteneurs
+docker ps
+\end{lstlisting}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{images/docker-containers.png}
+\caption{Docker Desktop - Conteneurs du cluster Spark}
+\end{figure}
+
+\subsection{Interfaces Web}
+
+\subsubsection{Spark Master UI (port 8080)}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{images/spark-ui-master.png}
+\caption{Interface Web du Spark Master}
+\end{figure}
+
+\subsubsection{Spark Worker 1 UI (port 8081)}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{images/spark-ui-worker1.png}
+\caption{Interface Web du Worker 1}
+\end{figure}
+
+\subsubsection{Spark Worker 2 UI (port 8082)}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{images/spark-ui-worker2.png}
+\caption{Interface Web du Worker 2}
+\end{figure}
+
+\subsection{Exécution sur le cluster}
+
+\begin{lstlisting}[style=bash]
+docker exec spark-master /opt/spark/bin/spark-submit \
+  --master spark://spark-master:7077 \
+  /app/event_counter.py \
+  --input /data/20251208.export.CSV \
+  --output /output/results
+\end{lstlisting}
+
+%==============================================================================
+\section{Comparaison des performances}
+%==============================================================================
+
+Avec un cluster de 3 nœuds (1 master + 2 workers), nous avons testé les performances avec un fichier volumineux.
+
+\subsection{Fichier de test}
+
+\begin{itemize}
+    \item \textbf{Fichier} : \texttt{GDELT.MASTERREDUCEDV2.1979-2013.zip}
+    \item \textbf{Taille} : 6.12 Go (compressé)
+    \item \textbf{Événements} : 87,298,047 événements
+    \item \textbf{Période} : 1979 à 2013
+\end{itemize}
+
+\subsection{Exécution locale}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{images/large-file-local/script-launch.png}
+\caption{Lancement du script en local - Gros fichier}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{images/large-file-local/load-count-times.png}
+\caption{Temps de chargement et comptage - Local}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{images/large-file-local/save-run-times.png}
+\caption{Temps de sauvegarde et total - Local}
+\end{figure}
+
+\subsection{Exécution sur le cluster}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{images/large-file-cluster/script-launch.png}
+\caption{Lancement du script sur le cluster - Gros fichier}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{images/large-file-cluster/load-count-times.png}
+\caption{Temps de chargement et comptage - Cluster}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{images/large-file-cluster/save-run-times.png}
+\caption{Temps de sauvegarde et total - Cluster}
+\end{figure}
+
+\subsection{Tableau comparatif}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|l|c|c|}
+\hline
+\textbf{Métrique} & \textbf{Local} & \textbf{Cluster (3 nœuds)} \\
+\hline
+Chargement des données & 63.75 s & 102.12 s \\
+\hline
+Comptage par pays & 0.13 s & 0.12 s \\
+\hline
+Sauvegarde des résultats & 27.38 s & 43.12 s \\
+\hline
+\textbf{Temps total} & \textbf{118.55 s} & \textbf{184.44 s} \\
+\hline
+\end{tabular}
+\caption{Comparaison des temps d'exécution - Fichier GDELT Reduced (87M événements)}
+\end{table}
+
+%==============================================================================
+\section{Conclusion}
+%==============================================================================
+
+Cet atelier a permis de mettre en place une infrastructure de traitement distribué avec Apache Spark pour analyser les données GDELT.
+
+\subsection{Points clés}
+
+\begin{itemize}
+    \item \textbf{Flexibilité du code} : Le programme est paramétrable et réutilisable pour différents formats de fichiers GDELT.
+    \item \textbf{Scalabilité} : Le déploiement Docker permet d'ajouter facilement des workers pour augmenter la capacité de traitement.
+    \item \textbf{Mesure des performances} : Le module timer permet de comparer objectivement les temps d'exécution.
+\end{itemize}
+
+\subsection{Analyse des résultats}
+
+Les résultats montrent que l'exécution locale est plus rapide pour ce jeu de données (118.55 s vs 184.44 s). Cela s'explique par :
+\begin{itemize}
+    \item \textbf{Overhead de distribution} : La sérialisation et le transfert des données entre le master et les workers ajoutent un délai significatif.
+    \item \textbf{Taille du fichier} : Avec 87 millions d'événements (~2.5 Go), le fichier n'est pas assez volumineux pour amortir le coût de la distribution.
+    \item \textbf{Environnement Docker} : L'exécution dans des conteneurs sur une même machine ajoute une couche de virtualisation.
+\end{itemize}
+
+Le cluster distribué devient avantageux lorsque :
+\begin{itemize}
+    \item Le volume de données dépasse plusieurs dizaines de Go
+    \item Les workers sont sur des machines physiques distinctes
+    \item Le traitement est plus complexe (jointures, agrégations multiples)
+\end{itemize}
+
+\subsection{Perspectives}
+
+Ce travail pourrait être étendu pour :
+\begin{itemize}
+    \item Analyser d'autres dimensions des données GDELT (acteurs, types d'événements)
+    \item Déployer sur un cluster cloud (AWS EMR, Google Dataproc)
+    \item Implémenter un traitement en temps réel avec Spark Streaming
+\end{itemize}
+
+\end{document}

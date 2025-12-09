@@ -10,3 +10,12 @@ output/*
 spark-warehouse/
 *.pyc
 __pycache__/
+
+# Fichiers LaTeX temporaires
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.synctex.gz
