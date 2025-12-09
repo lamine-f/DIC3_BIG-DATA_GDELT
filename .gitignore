@@ -1,2 +1,12 @@
-**datas
-**output
+# Ignorer le contenu des dossiers datas et output
+datas/*
+output/*
+
+# Garder les fichiers .gitkeep
+!datas/.gitkeep
+!output/.gitkeep
+
+# Fichiers Spark temporaires
+spark-warehouse/
+*.pyc
+__pycache__/
