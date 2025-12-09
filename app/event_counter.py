@@ -1,26 +1,31 @@
 import argparse
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import col, count
-from timer import timed
+try:
+    from .timer import timed
+except ImportError:
+    from timer import timed
 
 
 class GDELTEventCounter:
     """Classe pour compter les événements GDELT par pays."""
 
-    COUNTRY_CODE_COL_INDEX = 51  # Colonne du code pays dans GDELT 2.0
-
-    def __init__(self, master: str = "local[*]", app_name: str = "GDELTEventCounter"):
+    def __init__(self, master: str = "local[*]", app_name: str = "GDELTEventCounter", country_col: int = 51, has_header: bool = False):
         """
         Initialise la session Spark.
 
         Args:
             master: URL du Spark Master (défaut: local[*] pour mode local)
             app_name: Nom de l'application Spark
+            country_col: Index de la colonne du code pays (défaut: 51 pour GDELT 2.0)
+            has_header: True si le fichier a un en-tête (défaut: False)
         """
         self.spark = SparkSession.builder \
             .appName(app_name) \
             .master(master) \
             .getOrCreate()
+        self.country_col = country_col
+        self.has_header = has_header
         self.df = None
         self.results = None
 
@@ -39,7 +44,7 @@ class GDELTEventCounter:
         self.df = self.spark.read.csv(
             input_path,
             sep='\t',
-            header=False,
+            header=self.has_header,
             inferSchema=True
         )
         total_events = self.df.count()
@@ -58,9 +63,12 @@ class GDELTEventCounter:
             raise ValueError("Aucune donnée chargée. Appelez load_data() d'abord.")
 
         # Renommer la colonne du code pays
-        country_df = self.df.withColumnRenamed(
-            f"_c{self.COUNTRY_CODE_COL_INDEX}", "CountryCode"
-        )
+        if self.has_header:
+            # Avec en-tête, utiliser le nom de colonne par position
+            col_name = self.df.columns[self.country_col]
+        else:
+            col_name = f"_c{self.country_col}"
+        country_df = self.df.withColumnRenamed(col_name, "CountryCode")
 
         # Filtrer les pays non définis
         filtered_df = country_df.filter(
@@ -165,6 +173,17 @@ def parse_arguments():
         default="local[*]",
         help="URL Spark Master (défaut: local[*] pour mode local)"
     )
+    parser.add_argument(
+        "--country-col",
+        type=int,
+        default=51,
+        help="Index de la colonne du code pays (défaut: 51 pour GDELT 2.0)"
+    )
+    parser.add_argument(
+        "--header",
+        action="store_true",
+        help="Indique que le fichier a un en-tête"
+    )
     return parser.parse_args()
 
 
@@ -176,8 +195,10 @@ def main():
     print(f"  - Master: {args.master}")
     print(f"  - Input:  {args.input}")
     print(f"  - Output: {args.output}")
+    print(f"  - Country Col: {args.country_col}")
+    print(f"  - Header: {args.header}")
 
-    counter = GDELTEventCounter(master=args.master)
+    counter = GDELTEventCounter(master=args.master, country_col=args.country_col, has_header=args.header)
     try:
         counter.run(args.input, args.output)
     finally:

@@ -10,8 +10,7 @@ services:
       - "4040:4040"  # Spark Application UI
     volumes:
       - ./datas:/data
-      - ./event_counter.py:/app/event_counter.py
-      - ./timer.py:/app/timer.py
+      - ./app:/app
       - ./output:/output
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     networks:

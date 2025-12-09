@@ -46,9 +46,12 @@ Mise en place d'un cluster Apache Spark local avec Docker pour analyser les év�
 ```
 Atelier 1/
 ├── docker-compose.yml      # Configuration du cluster Spark (1 master + 2 workers)
-├── event_counter.py        # Programme PySpark orienté objet avec CLI
-├── timer.py                # Module de mesure du temps d'exécution
 ├── README.md               # Documentation (ce fichier)
+├── .gitignore              # Fichiers ignorés par Git
+├── app/                    # Code source Python
+│   ├── __init__.py         # Initialisation du package
+│   ├── event_counter.py    # Programme PySpark orienté objet avec CLI
+│   └── timer.py            # Module de mesure du temps d'exécution
 ├── datas/
 │   ├── 20251208.export.CSV       # Données GDELT (111,373 événements)
 │   └── GDELT.MASTERREDUCEDV2.TXT # Données GDELT 1979-2013
@@ -188,7 +191,7 @@ head -20 output/event_counts_by_country/part-00000-*.csv
 
 > Note : L'interface Application UI (4040) n'est disponible que pendant l'exécution d'un job.
 
-## Programme PySpark (event_counter.py)
+## Programme PySpark (app/event_counter.py)
 
 ### Architecture orientée objet
 
@@ -214,24 +217,30 @@ class GDELTEventCounter:
 | `--input` | Chemin du fichier GDELT à analyser | `datas/20251208.export.CSV` |
 | `--output` | Chemin du dossier de sortie CSV | `output/event_counts_by_country` |
 | `--master` | URL du Spark Master | `local[*]` |
+| `--country-col` | Index de la colonne contenant le code pays | `51` |
+| `--header` | Flag indiquant que le fichier a un en-tête | `False` |
 
 ### Exemples d'utilisation
 
 ```bash
-# Utilisation par défaut (mode local)
-python event_counter.py
+# GDELT 2.0 (par défaut, pas d'en-tête, colonne 51)
+docker exec spark-master /opt/spark/bin/spark-submit \
+  --master spark://spark-master:7077 \
+  /app/event_counter.py \
+  --input /data/20251208.export.CSV \
+  --output /output/results_2_0
 
-# Avec un fichier d'entrée différent
-python event_counter.py --input datas/autre_fichier.CSV
+# GDELT Reduced (avec en-tête, colonne Source = 1)
+docker exec spark-master /opt/spark/bin/spark-submit \
+  --master spark://spark-master:7077 \
+  /app/event_counter.py \
+  --input /data/GDELT.MASTERREDUCEDV2.TXT \
+  --header \
+  --country-col 1 \
+  --output /output/results_reduced
 
-# Connexion au cluster Docker
-python event_counter.py --master spark://localhost:7077
-
-# Configuration complète
-python event_counter.py \
-  --master spark://localhost:7077 \
-  --input datas/20251208.export.CSV \
-  --output output/resultats
+# Exécution locale avec spark-submit
+spark-submit app/event_counter.py --input datas/20251208.export.CSV
 ```
 
 ## Exécution locale (sans Docker)
@@ -273,36 +282,38 @@ Pour que Spark puisse écrire des fichiers CSV sur Windows, il faut configurer H
 
 6. **Redémarrer le terminal** et exécuter :
    ```bash
-   spark-submit event_counter.py
+   spark-submit app/event_counter.py
    ```
 
 > **Note** : L'exécution via Docker est recommandée car elle ne nécessite aucune configuration Hadoop supplémentaire.
 
 ## Mesure des performances
 
-Le module `timer.py` permet de mesurer et comparer les temps d'exécution entre l'exécution locale et le cluster Docker.
+Le module `app/timer.py` permet de mesurer et comparer les temps d'exécution entre l'exécution locale et le cluster Docker.
 
 ### Comparer Local vs Cluster
 
 **Exécution locale (Windows) :**
 ```bash
-spark-submit event_counter.py --input datas/GDELT.MASTERREDUCEDV2.TXT
+spark-submit app/event_counter.py --input datas/GDELT.MASTERREDUCEDV2.TXT --header --country-col 1
 ```
 
 **Exécution sur le cluster Docker (2 workers) :**
 ```bash
-docker exec spark-master //opt/spark/bin/spark-submit \
+docker exec spark-master /opt/spark/bin/spark-submit \
   --master spark://spark-master:7077 \
-  //app/event_counter.py \
-  --input /data/GDELT.MASTERREDUCEDV2.TXT
+  /app/event_counter.py \
+  --input /data/GDELT.MASTERREDUCEDV2.TXT \
+  --header \
+  --country-col 1
 ```
 
-### Module timer.py
+### Module app/timer.py
 
 Le décorateur `@timed` mesure automatiquement le temps de chaque méthode :
 
 ```python
-from timer import timed
+from app.timer import timed
 
 @timed
 def ma_fonction():
@@ -314,17 +325,16 @@ Sortie : `[TIMER] ma_fonction: X.XX secondes`
 
 ## Données GDELT
 
-### Format des fichiers
+### Formats supportés
+
+Le programme supporte deux formats GDELT :
+
+#### 1. GDELT 2.0 Events (ex: `20251208.export.CSV`)
 
 - **Format** : CSV avec séparateur tabulation (`\t`)
-- **En-tête** : Non (les fichiers GDELT n'ont pas d'en-tête)
-- **Encodage** : UTF-8
-
-### Colonne utilisée
-
-Le programme utilise la **colonne 52** (index 51) qui correspond au champ `ActionGeo_CountryCode` dans le schéma GDELT 2.0 Events. Ce champ contient le code pays FIPS à 2 lettres (ex: US, UK, FR, IN).
-
-### Schéma GDELT 2.0 (colonnes principales)
+- **En-tête** : Non
+- **Colonnes** : 58 colonnes
+- **Colonne pays** : Index 51 (`ActionGeo_CountryCode`)
 
 | Index | Nom | Description |
 |-------|-----|-------------|
@@ -335,6 +345,23 @@ Le programme utilise la **colonne 52** (index 51) qui correspond au champ `Actio
 | 50 | ActionGeo_FullName | Localisation complète de l'action |
 | 51 | ActionGeo_CountryCode | Code pays FIPS (2 lettres) |
 | 57 | SOURCEURL | URL de la source |
+
+#### 2. GDELT Reduced (ex: `GDELT.MASTERREDUCEDV2.TXT`)
+
+- **Format** : CSV avec séparateur tabulation (`\t`)
+- **En-tête** : Oui (utiliser `--header`)
+- **Colonnes** : 17 colonnes
+
+| Index | Nom | Description |
+|-------|-----|-------------|
+| 0 | Date | Date au format YYYYMMDD |
+| 1 | Source | Code de l'acteur source |
+| 2 | Target | Code de l'acteur cible |
+| 3 | CAMEOCode | Code CAMEO de l'événement |
+| 4 | NumEvents | Nombre d'événements |
+| 5 | NumArts | Nombre d'articles |
+| 6 | QuadClass | Classe de l'événement |
+| 7 | Goldstein | Score Goldstein |
 
 ## Arrêt du cluster
 
